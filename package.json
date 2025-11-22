@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start --port 3001",
     "lint": "eslint",
-    "db:seed": "tsx prisma/seed.ts"
+    "db:seed": "tsx prisma/seed.ts",
+    "test:basepath": "tsx scripts/test-basepath.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
