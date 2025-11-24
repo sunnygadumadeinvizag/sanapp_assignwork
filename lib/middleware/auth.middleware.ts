@@ -17,6 +17,7 @@ export function requiresAuth(request: NextRequest): boolean {
   const pathname = request.nextUrl.pathname;
   
   // Public routes that don't require authentication
+  // Note: Next.js strips basepath from pathname, so these should NOT include basepath
   const publicRoutes = [
     '/api/auth/login',
     '/api/auth/callback',
@@ -45,9 +46,13 @@ export async function verifyAuth(request: NextRequest): Promise<NextResponse | n
   const session = await getSession();
   
   if (!session) {
-    // No session - redirect to login with return URL
-    const loginUrl = new URL('/api/auth/login', request.url);
-    loginUrl.searchParams.set('returnTo', request.nextUrl.pathname + request.nextUrl.search);
+    // No session - redirect to our OAuth login endpoint which will initiate the OAuth flow
+    // Note: Next.js strips basepath from pathname, so we need to add it back
+    const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
+    const fullPath = `${basePath}${request.nextUrl.pathname}`;
+    const returnTo = `${fullPath}${request.nextUrl.search}`;
+    const loginUrl = new URL(`${basePath}/api/auth/login`, request.url);
+    loginUrl.searchParams.set('returnTo', returnTo);
     return NextResponse.redirect(loginUrl);
   }
   
@@ -58,8 +63,12 @@ export async function verifyAuth(request: NextRequest): Promise<NextResponse | n
       const tokens = await refreshAccessToken(session.refreshToken);
       
       if (!tokens) {
-        // Refresh failed - redirect to login
-        const loginUrl = new URL('/api/auth/login', request.url);
+        // Refresh failed - redirect to OAuth login endpoint
+        const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
+        const fullPath = `${basePath}${request.nextUrl.pathname}`;
+        const returnTo = `${fullPath}${request.nextUrl.search}`;
+        const loginUrl = new URL(`${basePath}/api/auth/login`, request.url);
+        loginUrl.searchParams.set('returnTo', returnTo);
         return NextResponse.redirect(loginUrl);
       }
       
@@ -73,8 +82,12 @@ export async function verifyAuth(request: NextRequest): Promise<NextResponse | n
     } catch (error) {
       console.error('Token refresh error in middleware:', error);
       
-      // Refresh failed - redirect to login
-      const loginUrl = new URL('/api/auth/login', request.url);
+      // Refresh failed - redirect to OAuth login endpoint
+      const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
+      const fullPath = `${basePath}${request.nextUrl.pathname}`;
+      const returnTo = `${fullPath}${request.nextUrl.search}`;
+      const loginUrl = new URL(`${basePath}/api/auth/login`, request.url);
+      loginUrl.searchParams.set('returnTo', returnTo);
       return NextResponse.redirect(loginUrl);
     }
   }

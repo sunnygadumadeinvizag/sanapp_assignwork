@@ -30,9 +30,10 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error('Login initiation error:', error);
     
+    const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
     return NextResponse.redirect(
       new URL(
-        `/auth/error?error=login_failed&description=${encodeURIComponent('Failed to initiate login')}`,
+        `${basePath}/auth/error?error=login_failed&description=${encodeURIComponent('Failed to initiate login')}`,
         request.url
       )
     );

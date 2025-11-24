@@ -16,8 +16,9 @@ export async function GET(request: NextRequest) {
 
     // Validate required parameters
     if (!code || !state) {
+      const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
       return NextResponse.redirect(
-        new URL('/auth/error?error=missing_parameters', request.url)
+        new URL(`${basePath}/auth/error?error=missing_parameters`, request.url)
       );
     }
 
@@ -25,8 +26,9 @@ export async function GET(request: NextRequest) {
     const flowData = await getOAuthFlowData();
 
     if (!flowData) {
+      const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
       return NextResponse.redirect(
-        new URL('/auth/error?error=invalid_state', request.url)
+        new URL(`${basePath}/auth/error?error=invalid_state`, request.url)
       );
     }
 
@@ -42,9 +44,10 @@ export async function GET(request: NextRequest) {
     await clearOAuthFlowData();
 
     if (!result.success || !result.tokens || !result.userInfo) {
+      const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
       return NextResponse.redirect(
         new URL(
-          `/auth/error?error=${result.error || 'callback_failed'}&description=${encodeURIComponent(result.errorDescription || 'Unknown error')}`,
+          `${basePath}/auth/error?error=${result.error || 'callback_failed'}&description=${encodeURIComponent(result.errorDescription || 'Unknown error')}`,
           request.url
         )
       );
@@ -56,9 +59,10 @@ export async function GET(request: NextRequest) {
 
     if (!syncResult.success || !syncResult.user) {
       // User doesn't exist locally - redirect to error page
+      const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
       return NextResponse.redirect(
         new URL(
-          `/auth/error?error=${syncResult.error || 'user_not_found'}&description=${encodeURIComponent(syncResult.errorDescription || 'User not found in local database')}`,
+          `${basePath}/auth/error?error=${syncResult.error || 'user_not_found'}&description=${encodeURIComponent(syncResult.errorDescription || 'User not found in local database')}`,
           request.url
         )
       );
@@ -87,14 +91,16 @@ export async function GET(request: NextRequest) {
     await storeSession(sessionData);
 
     // Redirect to original destination or home page
-    const returnTo = flowData.returnTo || '/';
+    const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
+    const returnTo = flowData.returnTo || `${basePath}/`;
     return NextResponse.redirect(new URL(returnTo, request.url));
   } catch (error) {
     console.error('Callback handler error:', error);
     
+    const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
     return NextResponse.redirect(
       new URL(
-        `/auth/error?error=server_error&description=${encodeURIComponent('An internal error occurred')}`,
+        `${basePath}/auth/error?error=server_error&description=${encodeURIComponent('An internal error occurred')}`,
         request.url
       )
     );

@@ -1,0 +1,16 @@
+# Database
+DATABASE_URL="postgresql://user:password@localhost:5432/assignwork_db"
+
+# SSO Configuration
+SSO_CLIENT_ID="assignwork"
+SSO_CLIENT_SECRET="your-client-secret"
+SSO_AUTHORIZE_URL="http://localhost:3000/api/oauth/authorize"
+SSO_TOKEN_URL="http://localhost:3000/api/oauth/token"
+SSO_USERINFO_URL="http://localhost:3000/api/oauth/userinfo"
+SSO_JWKS_URL="http://localhost:3000/api/oauth/jwks"
+SSO_LOGOUT_URL="http://localhost:3000/api/auth/logout"
+
+# Application
+APP_CALLBACK_URL="http://localhost:3001/auth/callback"
+NODE_ENV="development"
+PORT=3001
