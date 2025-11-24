@@ -1,0 +1,3 @@
+AssignWork Service - Public Asset
+This is a publicly accessible text file.
+No authentication required.

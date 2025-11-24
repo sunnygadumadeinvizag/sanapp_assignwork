@@ -21,8 +21,10 @@ export function requiresAuth(request: NextRequest): boolean {
   const publicRoutes = [
     '/api/auth/login',
     '/api/auth/callback',
+    '/api/public',        // Public API routes
     '/auth/error',
     '/login',
+    '/about',             // Public about page
     '/_next',
     '/favicon.ico',
   ];
