@@ -16,6 +16,8 @@ import { refreshAccessToken, isTokenExpired, calculateExpiresAt } from '@/lib/se
 export function requiresAuth(request: NextRequest): boolean {
   const pathname = request.nextUrl.pathname;
   
+  console.log('[AUTH MIDDLEWARE] Checking if route requires auth:', pathname);
+
   // Public routes that don't require authentication
   // Note: Next.js strips basepath from pathname, so these should NOT include basepath
   const publicRoutes = [
@@ -28,8 +30,11 @@ export function requiresAuth(request: NextRequest): boolean {
     '/_next',
     '/favicon.ico',
   ];
+
+  const isPublic = publicRoutes.some(route => pathname.startsWith(route));
+  console.log('[AUTH MIDDLEWARE] Is public route?', isPublic);
   
-  return !publicRoutes.some(route => pathname.startsWith(route));
+  return !isPublic;
 }
 
 /**
@@ -39,14 +44,40 @@ export function requiresAuth(request: NextRequest): boolean {
  * @returns Response if authentication fails, null if successful
  */
 export async function verifyAuth(request: NextRequest): Promise<NextResponse | null> {
+  console.log('[AUTH MIDDLEWARE] verifyAuth called for:', request.nextUrl.pathname);
+  
   // Check if route requires authentication
   if (!requiresAuth(request)) {
+    console.log('[AUTH MIDDLEWARE] Route does not require auth, skipping');
     return null;
   }
-  
+
   // Get current session
+  console.log('[AUTH MIDDLEWARE] Getting session...');
   const session = await getSession();
-  
+  console.log('[AUTH MIDDLEWARE] Session exists?', !!session);
+
+  // Check for session_token cookie (SSO session)
+  const sessionToken = request.cookies.get('session_token')?.value;
+  console.log('[AUTH MIDDLEWARE] SSO session_token exists?', !!sessionToken);
+
+  // If we have a local session but NO SSO session_token, user logged out from SSO
+  if (session && !sessionToken) {
+    console.log('[AUTH MIDDLEWARE] Local session exists but SSO session_token missing - user logged out from SSO');
+    
+    const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
+    const fullPath = `${basePath}${request.nextUrl.pathname}`;
+    const returnTo = `${fullPath}${request.nextUrl.search}`;
+    const loginUrl = new URL(`${basePath}/api/auth/login`, request.url);
+    loginUrl.searchParams.set('returnTo', returnTo);
+
+    // Clear the local session cookie
+    const response = NextResponse.redirect(loginUrl);
+    response.cookies.delete('assignwork_session');
+    
+    return response;
+  }
+
   if (!session) {
     // No session - redirect to our OAuth login endpoint which will initiate the OAuth flow
     // Note: Next.js strips basepath from pathname, so we need to add it back
@@ -57,13 +88,54 @@ export async function verifyAuth(request: NextRequest): Promise<NextResponse | n
     loginUrl.searchParams.set('returnTo', returnTo);
     return NextResponse.redirect(loginUrl);
   }
-  
+
+  // Validate SSO session is still valid (for Single Logout support)
+  if (sessionToken) {
+    try {
+      const ssoUrl = process.env.NEXT_PUBLIC_SSO_URL || 'http://localhost:3000/sso';
+      console.log('[AUTH MIDDLEWARE] Validating SSO session with:', `${ssoUrl}/api/validate-session`);
+      
+      const validationResponse = await fetch(`${ssoUrl}/api/validate-session`, {
+        method: 'GET',
+        headers: {
+          'Cookie': `session_token=${sessionToken}`,
+        },
+        // Don't follow redirects
+        redirect: 'manual',
+        cache: 'no-store', // Don't cache validation responses
+      });
+
+      console.log('[AUTH MIDDLEWARE] SSO validation response status:', validationResponse.status);
+
+      // If SSO session is invalid (user logged out from SSO), clear local session
+      if (validationResponse.status === 401) {
+        console.log('[AUTH MIDDLEWARE] SSO session invalid - clearing local session and redirecting to login');
+        
+        const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
+        const fullPath = `${basePath}${request.nextUrl.pathname}`;
+        const returnTo = `${fullPath}${request.nextUrl.search}`;
+        const loginUrl = new URL(`${basePath}/api/auth/login`, request.url);
+        loginUrl.searchParams.set('returnTo', returnTo);
+
+        // Clear ALL session-related cookies
+        const response = NextResponse.redirect(loginUrl);
+        response.cookies.delete('session_token');
+        response.cookies.delete('assignwork_session'); // Clear the local session cookie
+        
+        return response;
+      }
+    } catch (error) {
+      // Log error but don't block - SSO might be temporarily unavailable
+      console.error('[AUTH MIDDLEWARE] SSO session validation error:', error);
+    }
+  }
+
   // Check if access token is expired or about to expire
   if (isTokenExpired(session.expiresAt)) {
     try {
       // Attempt to refresh token
       const tokens = await refreshAccessToken(session.refreshToken);
-      
+
       if (!tokens) {
         // Refresh failed - redirect to OAuth login endpoint
         const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
@@ -73,7 +145,7 @@ export async function verifyAuth(request: NextRequest): Promise<NextResponse | n
         loginUrl.searchParams.set('returnTo', returnTo);
         return NextResponse.redirect(loginUrl);
       }
-      
+
       // Update session with new tokens
       const expiresAt = calculateExpiresAt(tokens.expires_in);
       await updateSession({
@@ -83,7 +155,7 @@ export async function verifyAuth(request: NextRequest): Promise<NextResponse | n
       });
     } catch (error) {
       console.error('Token refresh error in middleware:', error);
-      
+
       // Refresh failed - redirect to OAuth login endpoint
       const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
       const fullPath = `${basePath}${request.nextUrl.pathname}`;
@@ -93,7 +165,7 @@ export async function verifyAuth(request: NextRequest): Promise<NextResponse | n
       return NextResponse.redirect(loginUrl);
     }
   }
-  
+
   // Authentication successful
   return null;
 }
@@ -134,7 +206,7 @@ export async function requireAuth(
 }> {
   // Get current session
   const session = await getSession();
-  
+
   if (!session) {
     return {
       authenticated: false,
@@ -148,13 +220,13 @@ export async function requireAuth(
       ),
     };
   }
-  
+
   // Check if access token is expired
   if (isTokenExpired(session.expiresAt)) {
     try {
       // Attempt to refresh token
       const tokens = await refreshAccessToken(session.refreshToken);
-      
+
       if (!tokens) {
         return {
           authenticated: false,
@@ -168,7 +240,7 @@ export async function requireAuth(
           ),
         };
       }
-      
+
       // Update session with new tokens
       const expiresAt = calculateExpiresAt(tokens.expires_in);
       await updateSession({
@@ -176,7 +248,7 @@ export async function requireAuth(
         refreshToken: tokens.refresh_token,
         expiresAt,
       });
-      
+
       // Get updated session
       const updatedSession = await getSession();
       if (!updatedSession) {
@@ -192,14 +264,14 @@ export async function requireAuth(
           ),
         };
       }
-      
+
       return {
         authenticated: true,
         userId: updatedSession.user.id,
       };
     } catch (error) {
       console.error('Token refresh error:', error);
-      
+
       return {
         authenticated: false,
         response: NextResponse.json(
@@ -213,7 +285,7 @@ export async function requireAuth(
       };
     }
   }
-  
+
   // Authentication successful
   return {
     authenticated: true,

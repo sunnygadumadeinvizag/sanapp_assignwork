@@ -1,4 +1,4 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { verifyAuth } from '@/lib/middleware/auth.middleware';
 
 /**
@@ -6,15 +6,19 @@ import { verifyAuth } from '@/lib/middleware/auth.middleware';
  * Runs on every request to verify authentication
  */
 export async function proxy(request: NextRequest) {
+  console.log('[PROXY] Request to:', request.nextUrl.pathname);
+  
   // Verify authentication and handle token refresh
   const authResponse = await verifyAuth(request);
   
   if (authResponse) {
+    console.log('[PROXY] Auth failed, redirecting');
     return authResponse;
   }
   
+  console.log('[PROXY] Auth successful, continuing');
   // Continue to route handler
-  return null;
+  return NextResponse.next();
 }
 
 /**
