@@ -30,15 +30,14 @@ export function useBasePath() {
     const appUrl = useMemo(() => getAppUrl(), []);
 
     /**
-     * Navigate to a path (automatically adds basePath)
+     * Navigate to a path (Next.js router automatically handles basePath)
      */
     const navigate = useCallback((path: string, options?: { replace?: boolean }) => {
-        const fullPath = withBasePath(path);
-
+        // Don't use withBasePath here - Next.js router already handles basePath
         if (options?.replace) {
-            router.replace(fullPath);
+            router.replace(path);
         } else {
-            router.push(fullPath);
+            router.push(path);
         }
     }, [router]);
 
