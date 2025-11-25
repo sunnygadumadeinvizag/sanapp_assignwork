@@ -24,6 +24,8 @@ export function requiresAuth(request: NextRequest): boolean {
     '/api/auth/login',
     '/api/auth/callback',
     '/api/public',        // Public API routes
+    '/api/admin/sync-users',  // Allow user sync from menu app
+    '/api/admin/users',       // Allow user management from menu app
     '/auth/error',
     '/login',
     '/about',             // Public about page
