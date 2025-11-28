@@ -15,7 +15,7 @@ import { refreshAccessToken, isTokenExpired, calculateExpiresAt } from '@/lib/se
  */
 export function requiresAuth(request: NextRequest): boolean {
   const pathname = request.nextUrl.pathname;
-  
+
   console.log('[AUTH MIDDLEWARE] Checking if route requires auth:', pathname);
 
   // Public routes that don't require authentication
@@ -35,7 +35,7 @@ export function requiresAuth(request: NextRequest): boolean {
 
   const isPublic = publicRoutes.some(route => pathname.startsWith(route));
   console.log('[AUTH MIDDLEWARE] Is public route?', isPublic);
-  
+
   return !isPublic;
 }
 
@@ -47,7 +47,7 @@ export function requiresAuth(request: NextRequest): boolean {
  */
 export async function verifyAuth(request: NextRequest): Promise<NextResponse | null> {
   console.log('[AUTH MIDDLEWARE] verifyAuth called for:', request.nextUrl.pathname);
-  
+
   // Check if route requires authentication
   if (!requiresAuth(request)) {
     console.log('[AUTH MIDDLEWARE] Route does not require auth, skipping');
@@ -66,17 +66,17 @@ export async function verifyAuth(request: NextRequest): Promise<NextResponse | n
   // If we have a local session but NO SSO session_token, user logged out from SSO
   if (session && !sessionToken) {
     console.log('[AUTH MIDDLEWARE] Local session exists but SSO session_token missing - user logged out from SSO');
-    
+
     const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
     const fullPath = `${basePath}${request.nextUrl.pathname}`;
     const returnTo = `${fullPath}${request.nextUrl.search}`;
-    const loginUrl = new URL(`${basePath}/api/auth/login`, request.url);
+    const loginUrl = new URL(`${basePath}/api/auth/login`, request.nextUrl.origin);
     loginUrl.searchParams.set('returnTo', returnTo);
 
-    // Clear the local session cookie
+    // Clear the local session cookie with explicit path
     const response = NextResponse.redirect(loginUrl);
-    response.cookies.delete('assignwork_session');
-    
+    response.cookies.set('assignwork_session', '', { path: '/', maxAge: 0 });
+
     return response;
   }
 
@@ -86,7 +86,7 @@ export async function verifyAuth(request: NextRequest): Promise<NextResponse | n
     const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
     const fullPath = `${basePath}${request.nextUrl.pathname}`;
     const returnTo = `${fullPath}${request.nextUrl.search}`;
-    const loginUrl = new URL(`${basePath}/api/auth/login`, request.url);
+    const loginUrl = new URL(`${basePath}/api/auth/login`, request.nextUrl.origin);
     loginUrl.searchParams.set('returnTo', returnTo);
     return NextResponse.redirect(loginUrl);
   }
@@ -96,7 +96,7 @@ export async function verifyAuth(request: NextRequest): Promise<NextResponse | n
     try {
       const ssoUrl = process.env.NEXT_PUBLIC_SSO_URL || 'http://localhost:3000/sso';
       console.log('[AUTH MIDDLEWARE] Validating SSO session with:', `${ssoUrl}/api/validate-session`);
-      
+
       const validationResponse = await fetch(`${ssoUrl}/api/validate-session`, {
         method: 'GET',
         headers: {
@@ -112,18 +112,18 @@ export async function verifyAuth(request: NextRequest): Promise<NextResponse | n
       // If SSO session is invalid (user logged out from SSO), clear local session
       if (validationResponse.status === 401) {
         console.log('[AUTH MIDDLEWARE] SSO session invalid - clearing local session and redirecting to login');
-        
+
         const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
         const fullPath = `${basePath}${request.nextUrl.pathname}`;
         const returnTo = `${fullPath}${request.nextUrl.search}`;
-        const loginUrl = new URL(`${basePath}/api/auth/login`, request.url);
+        const loginUrl = new URL(`${basePath}/api/auth/login`, request.nextUrl.origin);
         loginUrl.searchParams.set('returnTo', returnTo);
 
-        // Clear ALL session-related cookies
+        // Clear ALL session-related cookies with explicit paths
         const response = NextResponse.redirect(loginUrl);
-        response.cookies.delete('session_token');
-        response.cookies.delete('assignwork_session'); // Clear the local session cookie
-        
+        response.cookies.set('session_token', '', { path: '/', maxAge: 0 });
+        response.cookies.set('assignwork_session', '', { path: '/', maxAge: 0 });
+
         return response;
       }
     } catch (error) {
@@ -143,7 +143,7 @@ export async function verifyAuth(request: NextRequest): Promise<NextResponse | n
         const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
         const fullPath = `${basePath}${request.nextUrl.pathname}`;
         const returnTo = `${fullPath}${request.nextUrl.search}`;
-        const loginUrl = new URL(`${basePath}/api/auth/login`, request.url);
+        const loginUrl = new URL(`${basePath}/api/auth/login`, request.nextUrl.origin);
         loginUrl.searchParams.set('returnTo', returnTo);
         return NextResponse.redirect(loginUrl);
       }
@@ -162,7 +162,7 @@ export async function verifyAuth(request: NextRequest): Promise<NextResponse | n
       const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
       const fullPath = `${basePath}${request.nextUrl.pathname}`;
       const returnTo = `${fullPath}${request.nextUrl.search}`;
-      const loginUrl = new URL(`${basePath}/api/auth/login`, request.url);
+      const loginUrl = new URL(`${basePath}/api/auth/login`, request.nextUrl.origin);
       loginUrl.searchParams.set('returnTo', returnTo);
       return NextResponse.redirect(loginUrl);
     }
