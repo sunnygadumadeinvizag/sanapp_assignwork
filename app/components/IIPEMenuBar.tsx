@@ -89,6 +89,9 @@ export default function IIPEMenuBar({ session }: { session?: UserSession }) {
             // SSO_URL already includes the base path (e.g., http://localhost:3000/sso)
             const ssoUrl = process.env.NEXT_PUBLIC_SSO_URL || 'http://localhost:3000/sso';
 
+            // Get the basePath for this app (e.g., /assignwork)
+            const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
+
             // Get the current page URL to redirect back after re-login
             const currentUrl = window.location.href;
 
@@ -112,8 +115,8 @@ export default function IIPEMenuBar({ session }: { session?: UserSession }) {
                 }
             }
 
-            // Clear local session
-            await fetch('/api/auth/logout', {
+            // Clear local session using proper basePath
+            await fetch(`${basePath}/api/auth/logout`, {
                 method: 'POST',
             });
 
@@ -122,8 +125,8 @@ export default function IIPEMenuBar({ session }: { session?: UserSession }) {
 
             // Wait 2 seconds to show success message, then redirect to SSO login
             setTimeout(() => {
-                // Redirect to SSO login with returnTo parameter (ssoUrl already includes base path)
-                const loginUrl = `${ssoUrl}/login?returnTo=${encodeURIComponent(currentUrl)}`;
+                // Redirect to SSO login with callbackUrl parameter (ssoUrl already includes base path)
+                const loginUrl = `${ssoUrl}/login?callbackUrl=${encodeURIComponent(currentUrl)}`;
                 window.location.href = loginUrl;
             }, 2000);
         } catch (error) {
@@ -133,7 +136,7 @@ export default function IIPEMenuBar({ session }: { session?: UserSession }) {
             setTimeout(() => {
                 const ssoUrl = process.env.NEXT_PUBLIC_SSO_URL || 'http://localhost:3000/sso';
                 const currentUrl = window.location.href;
-                const loginUrl = `${ssoUrl}/login?returnTo=${encodeURIComponent(currentUrl)}`;
+                const loginUrl = `${ssoUrl}/login?callbackUrl=${encodeURIComponent(currentUrl)}`;
                 window.location.href = loginUrl;
             }, 2000);
         }
