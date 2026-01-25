@@ -2,17 +2,31 @@
 
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import SessionTimeoutModal from './SessionTimeoutModal';
-import { SESSION_TIMEOUT_CONFIG } from '@/lib/session-timeout.config';
+
+// Session timeout config fetched from SSO
+interface SessionConfig {
+    warningBeforeLogoutMs: number;
+    countdownDurationSec: number;
+    extensionDurationMs: number;
+    maxSessionDurationMs: number;
+    activityCheckIntervalMs: number;
+    activityThrottleMs: number;
+    activityEvents: readonly string[];
+}
+
+// Default config (fallback if SSO unreachable)
+const DEFAULT_CONFIG: SessionConfig = {
+    warningBeforeLogoutMs: 9 * 60 * 1000,
+    countdownDurationSec: 60,
+    extensionDurationMs: 10 * 60 * 1000,
+    maxSessionDurationMs: 6 * 60 * 60 * 1000,
+    activityCheckIntervalMs: 30 * 1000,
+    activityThrottleMs: 5 * 1000,
+    activityEvents: ['mousedown', 'mousemove', 'keydown', 'scroll', 'touchstart', 'click'],
+};
 
 interface SessionTimeoutContextType {
     resetIdleTimer: () => void;
-    getSessionInfo: () => SessionInfo | null;
-}
-
-interface SessionInfo {
-    sessionCreatedAt: number;
-    lastActivityAt: number;
-    expiresAt: number;
 }
 
 const SessionTimeoutContext = createContext<SessionTimeoutContextType | null>(null);
@@ -35,136 +49,160 @@ export default function SessionTimeoutProvider({
     enabled = true
 }: SessionTimeoutProviderProps) {
     const [showModal, setShowModal] = useState(false);
-    const [countdown, setCountdown] = useState(SESSION_TIMEOUT_CONFIG.COUNTDOWN_DURATION_SEC);
+    const [countdown, setCountdown] = useState(60);
     const [isExtending, setIsExtending] = useState(false);
     const [maxSessionReached, setMaxSessionReached] = useState(false);
+    const [config, setConfig] = useState<SessionConfig>(DEFAULT_CONFIG);
+    const [configLoaded, setConfigLoaded] = useState(false);
 
-    // Session timing state
-    const [sessionInfo, setSessionInfo] = useState<SessionInfo | null>(null);
     const lastActivityRef = useRef<number>(Date.now());
     const idleTimerRef = useRef<NodeJS.Timeout | null>(null);
     const countdownTimerRef = useRef<NodeJS.Timeout | null>(null);
     const activityThrottleRef = useRef<number>(0);
 
-    // Get base path for API calls
+    // Get SSO URL
+    const ssoUrl = typeof window !== 'undefined'
+        ? (process.env.NEXT_PUBLIC_SSO_URL || 'http://localhost:3000/sso')
+        : 'http://localhost:3000/sso';
+
+    // Get base path for local API calls
     const basePath = typeof window !== 'undefined'
         ? (process.env.NEXT_PUBLIC_BASE_PATH || '')
         : '';
 
-    // Initialize session info from storage
+    // Fetch session config from SSO on mount
     useEffect(() => {
         if (!enabled) return;
 
-        const initSessionInfo = () => {
+        const fetchConfig = async () => {
             try {
-                const stored = localStorage.getItem('session_timing');
-                if (stored) {
-                    const parsed = JSON.parse(stored);
-                    setSessionInfo(parsed);
-                } else {
-                    // Initialize new session timing
-                    const now = Date.now();
-                    const newInfo: SessionInfo = {
-                        sessionCreatedAt: now,
-                        lastActivityAt: now,
-                        expiresAt: now + SESSION_TIMEOUT_CONFIG.WARNING_BEFORE_LOGOUT_MS + (SESSION_TIMEOUT_CONFIG.COUNTDOWN_DURATION_SEC * 1000),
-                    };
-                    localStorage.setItem('session_timing', JSON.stringify(newInfo));
-                    setSessionInfo(newInfo);
+                // No credentials needed - session-config is a public endpoint
+                const response = await fetch(`${ssoUrl}/api/session-config`);
+                if (response.ok) {
+                    const data = await response.json();
+                    setConfig(data);
+                    setCountdown(data.countdownDurationSec);
                 }
             } catch (error) {
-                console.error('Error initializing session timing:', error);
+                console.warn('Failed to fetch session config from SSO, using defaults');
+            } finally {
+                setConfigLoaded(true);
             }
         };
 
-        initSessionInfo();
-    }, [enabled]);
+        fetchConfig();
+    }, [enabled, ssoUrl]);
 
-    // Check if max session duration reached
-    const checkMaxSession = useCallback(() => {
-        if (!sessionInfo) return false;
+    // Check session status with SSO before showing modal
+    const checkSSOSessionStatus = useCallback(async (): Promise<{ shouldShowModal: boolean; maxReached: boolean }> => {
+        try {
+            const response = await fetch(`${ssoUrl}/api/validate-session`, {
+                credentials: 'include',
+            });
 
-        const now = Date.now();
-        const sessionDuration = now - sessionInfo.sessionCreatedAt;
-        return sessionDuration >= SESSION_TIMEOUT_CONFIG.MAX_SESSION_DURATION_MS;
-    }, [sessionInfo]);
+            if (!response.ok) {
+                // Session is invalid, should logout
+                return { shouldShowModal: true, maxReached: false };
+            }
+
+            const data = await response.json();
+
+            if (!data.valid) {
+                return { shouldShowModal: true, maxReached: false };
+            }
+
+            // Check if session was extended elsewhere
+            if (data.sessionTiming) {
+                const { maxSessionApproaching, timeUntilExpiry } = data.sessionTiming;
+                const warningThreshold = config.countdownDurationSec * 1000 + 5000; // countdown + 5s buffer
+
+                // If session has more time than warning threshold, it was extended elsewhere
+                if (timeUntilExpiry > warningThreshold) {
+                    console.log('[Session] Session was extended elsewhere, resetting timer');
+                    return { shouldShowModal: false, maxReached: false };
+                }
+
+                // Check if max session reached
+                if (maxSessionApproaching && timeUntilExpiry <= warningThreshold) {
+                    return { shouldShowModal: true, maxReached: true };
+                }
+
+                // Session is actually about to expire
+                return { shouldShowModal: true, maxReached: false };
+            }
+
+            // Fallback: show modal if we couldn't determine timing
+            return { shouldShowModal: true, maxReached: false };
+        } catch (error) {
+            console.error('Error checking SSO session status:', error);
+            // On error, don't show modal (might be network issue)
+            return { shouldShowModal: false, maxReached: false };
+        }
+    }, [ssoUrl, config.countdownDurationSec]);
 
     // Reset idle timer
     const resetIdleTimer = useCallback(() => {
-        if (!enabled || showModal) return;
+        if (!enabled || !configLoaded || showModal) return;
 
         const now = Date.now();
 
         // Throttle activity updates
-        if (now - activityThrottleRef.current < SESSION_TIMEOUT_CONFIG.ACTIVITY_THROTTLE_MS) {
+        if (now - activityThrottleRef.current < config.activityThrottleMs) {
             return;
         }
         activityThrottleRef.current = now;
         lastActivityRef.current = now;
-
-        // Update session info
-        if (sessionInfo) {
-            const updatedInfo = { ...sessionInfo, lastActivityAt: now };
-            setSessionInfo(updatedInfo);
-            try {
-                localStorage.setItem('session_timing', JSON.stringify(updatedInfo));
-            } catch (error) {
-                console.error('Error updating session timing:', error);
-            }
-        }
 
         // Clear existing timer
         if (idleTimerRef.current) {
             clearTimeout(idleTimerRef.current);
         }
 
-        // Check max session first
-        if (checkMaxSession()) {
-            setMaxSessionReached(true);
-            setShowModal(true);
-            setCountdown(SESSION_TIMEOUT_CONFIG.COUNTDOWN_DURATION_SEC);
-            return;
-        }
+        // Set new idle timer - check with SSO when it fires
+        idleTimerRef.current = setTimeout(async () => {
+            const { shouldShowModal, maxReached } = await checkSSOSessionStatus();
 
-        // Set new idle timer
-        idleTimerRef.current = setTimeout(() => {
-            if (checkMaxSession()) {
-                setMaxSessionReached(true);
+            if (shouldShowModal) {
+                setMaxSessionReached(maxReached);
+                setShowModal(true);
+                setCountdown(config.countdownDurationSec);
+            } else {
+                // Session was extended elsewhere, reset timer
+                resetIdleTimer();
             }
-            setShowModal(true);
-            setCountdown(SESSION_TIMEOUT_CONFIG.COUNTDOWN_DURATION_SEC);
-        }, SESSION_TIMEOUT_CONFIG.WARNING_BEFORE_LOGOUT_MS);
-    }, [enabled, showModal, sessionInfo, checkMaxSession]);
-
-    // Get session info
-    const getSessionInfo = useCallback(() => sessionInfo, [sessionInfo]);
+        }, config.warningBeforeLogoutMs);
+    }, [enabled, configLoaded, showModal, config, checkSSOSessionStatus]);
 
     // Set up activity listeners
     useEffect(() => {
-        if (!enabled) return;
+        if (!enabled || !configLoaded) return;
 
         const handleActivity = () => {
             resetIdleTimer();
         };
 
         // Add event listeners for user activity
-        SESSION_TIMEOUT_CONFIG.ACTIVITY_EVENTS.forEach(event => {
+        config.activityEvents.forEach(event => {
             window.addEventListener(event, handleActivity, { passive: true });
         });
 
         // Also listen for visibility change
-        const handleVisibilityChange = () => {
+        const handleVisibilityChange = async () => {
             if (document.visibilityState === 'visible') {
-                // Check if we should show the modal when tab becomes visible
-                const now = Date.now();
-                const timeSinceLastActivity = now - lastActivityRef.current;
+                // Check with SSO when tab becomes visible
+                const { shouldShowModal, maxReached } = await checkSSOSessionStatus();
 
-                if (timeSinceLastActivity >= SESSION_TIMEOUT_CONFIG.WARNING_BEFORE_LOGOUT_MS) {
-                    if (checkMaxSession()) {
-                        setMaxSessionReached(true);
+                if (shouldShowModal) {
+                    const now = Date.now();
+                    const timeSinceLastActivity = now - lastActivityRef.current;
+
+                    if (timeSinceLastActivity >= config.warningBeforeLogoutMs) {
+                        setMaxSessionReached(maxReached);
+                        setShowModal(true);
+                        setCountdown(config.countdownDurationSec);
+                    } else {
+                        resetIdleTimer();
                     }
-                    setShowModal(true);
-                    setCountdown(SESSION_TIMEOUT_CONFIG.COUNTDOWN_DURATION_SEC);
                 } else {
                     resetIdleTimer();
                 }
@@ -177,7 +215,7 @@ export default function SessionTimeoutProvider({
         resetIdleTimer();
 
         return () => {
-            SESSION_TIMEOUT_CONFIG.ACTIVITY_EVENTS.forEach(event => {
+            config.activityEvents.forEach(event => {
                 window.removeEventListener(event, handleActivity);
             });
             document.removeEventListener('visibilitychange', handleVisibilityChange);
@@ -186,7 +224,7 @@ export default function SessionTimeoutProvider({
                 clearTimeout(idleTimerRef.current);
             }
         };
-    }, [enabled, resetIdleTimer, checkMaxSession]);
+    }, [enabled, configLoaded, config, resetIdleTimer, checkSSOSessionStatus]);
 
     // Countdown timer
     useEffect(() => {
@@ -200,7 +238,6 @@ export default function SessionTimeoutProvider({
         countdownTimerRef.current = setInterval(() => {
             setCountdown(prev => {
                 if (prev <= 1) {
-                    // Time's up - logout
                     handleLogout();
                     return 0;
                 }
@@ -232,26 +269,13 @@ export default function SessionTimeoutProvider({
             const data = await response.json();
 
             if (data.success) {
-                // Update session info with new expiration
-                if (sessionInfo && data.expiresAt) {
-                    const updatedInfo = {
-                        ...sessionInfo,
-                        lastActivityAt: Date.now(),
-                        expiresAt: data.expiresAt,
-                    };
-                    setSessionInfo(updatedInfo);
-                    localStorage.setItem('session_timing', JSON.stringify(updatedInfo));
-                }
-
-                // Close modal and reset
                 setShowModal(false);
-                setCountdown(SESSION_TIMEOUT_CONFIG.COUNTDOWN_DURATION_SEC);
+                setCountdown(config.countdownDurationSec);
                 resetIdleTimer();
             } else if (data.maxSessionReached) {
                 setMaxSessionReached(true);
             } else {
                 console.error('Failed to extend session:', data.error);
-                // Still close modal but the next activity will trigger it again
                 setShowModal(false);
                 resetIdleTimer();
             }
@@ -266,24 +290,13 @@ export default function SessionTimeoutProvider({
 
     // Handle logout
     const handleLogout = async () => {
-        // Clear local session timing
-        try {
-            localStorage.removeItem('session_timing');
-        } catch (error) {
-            console.error('Error clearing session timing:', error);
-        }
-
-        // Clear countdown timer
         if (countdownTimerRef.current) {
             clearInterval(countdownTimerRef.current);
         }
 
-        // Get SSO URL for redirect
-        const ssoUrl = process.env.NEXT_PUBLIC_SSO_URL || 'http://localhost:3000/sso';
         const currentUrl = typeof window !== 'undefined' ? window.location.href : '';
 
         try {
-            // Call local logout API
             await fetch(`${basePath}/api/auth/logout`, {
                 method: 'POST',
             });
@@ -291,13 +304,12 @@ export default function SessionTimeoutProvider({
             console.error('Logout error:', error);
         }
 
-        // Redirect to SSO login
         const loginUrl = `${ssoUrl}/login?callbackUrl=${encodeURIComponent(currentUrl)}`;
         window.location.href = loginUrl;
     };
 
     return (
-        <SessionTimeoutContext.Provider value={{ resetIdleTimer, getSessionInfo }}>
+        <SessionTimeoutContext.Provider value={{ resetIdleTimer }}>
             {children}
             <SessionTimeoutModal
                 isOpen={showModal}
