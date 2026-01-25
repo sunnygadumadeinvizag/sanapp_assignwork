@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import LogoutConfirmationModal from './LogoutConfirmationModal';
 
 type Menu = {
     id: string;
@@ -29,6 +30,8 @@ export default function IIPEMenuBar({ session }: { session?: UserSession }) {
     const [categories, setCategories] = useState<Category[]>([]);
     const [userNav, setUserNav] = useState<any>(null);
     const [loading, setLoading] = useState(true);
+    const [showLogoutModal, setShowLogoutModal] = useState(false);
+    const [logoutSuccess, setLogoutSuccess] = useState(false);
 
     useEffect(() => {
         const fetchMenus = async () => {
@@ -77,13 +80,65 @@ export default function IIPEMenuBar({ session }: { session?: UserSession }) {
         fetchMenus();
     }, [session]);
 
-    const handleLogout = async () => {
-        if (userNav?.logout) {
-            window.location.href = userNav.logout;
-        } else {
-            const ssoUrl = process.env.NEXT_PUBLIC_SSO_URL || 'http://localhost:3000';
-            window.location.href = `${ssoUrl}/logout`;
+    const handleLogout = () => {
+        setShowLogoutModal(true);
+    };
+
+    const confirmLogout = async () => {
+        try {
+            // SSO_URL already includes the base path (e.g., http://localhost:3000/sso)
+            const ssoUrl = process.env.NEXT_PUBLIC_SSO_URL || 'http://localhost:3000/sso';
+
+            // Get the current page URL to redirect back after re-login
+            const currentUrl = window.location.href;
+
+            // Call SSO logout API to invalidate all tokens
+            if (session?.accessToken) {
+                const logoutResponse = await fetch(`${ssoUrl}/api/logout`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${session.accessToken}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        redirectUrl: currentUrl
+                    }),
+                });
+
+                // Check if logout was successful
+                if (logoutResponse.ok) {
+                    const data = await logoutResponse.json();
+                    console.log('SSO logout successful:', data);
+                }
+            }
+
+            // Clear local session
+            await fetch('/api/auth/logout', {
+                method: 'POST',
+            });
+
+            // Show success state
+            setLogoutSuccess(true);
+
+            // Wait 2 seconds to show success message, then redirect to SSO login
+            setTimeout(() => {
+                // Redirect to SSO login with returnTo parameter (ssoUrl already includes base path)
+                const loginUrl = `${ssoUrl}/login?returnTo=${encodeURIComponent(currentUrl)}`;
+                window.location.href = loginUrl;
+            }, 2000);
+        } catch (error) {
+            console.error('Logout error:', error);
+            // Even if there's an error, show success and redirect
+            setLogoutSuccess(true);
+            setTimeout(() => {
+                const ssoUrl = process.env.NEXT_PUBLIC_SSO_URL || 'http://localhost:3000/sso';
+                const currentUrl = window.location.href;
+                const loginUrl = `${ssoUrl}/login?returnTo=${encodeURIComponent(currentUrl)}`;
+                window.location.href = loginUrl;
+            }, 2000);
         }
+
+
     };
 
     // Don't render anything if no session
@@ -161,6 +216,14 @@ export default function IIPEMenuBar({ session }: { session?: UserSession }) {
                     </div>
                 </div>
             </div>
+
+            {/* Logout Confirmation Modal */}
+            <LogoutConfirmationModal
+                isOpen={showLogoutModal}
+                onClose={() => setShowLogoutModal(false)}
+                onConfirm={confirmLogout}
+                isSuccess={logoutSuccess}
+            />
         </div>
     );
 }

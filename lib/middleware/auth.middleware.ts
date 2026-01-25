@@ -92,7 +92,8 @@ export async function verifyAuth(request: NextRequest): Promise<NextResponse | n
   }
 
   // Validate SSO session is still valid (for Single Logout support)
-  if (sessionToken) {
+  // Use the access token from our session to validate against SSO
+  if (session.accessToken) {
     try {
       const ssoUrl = process.env.NEXT_PUBLIC_SSO_URL || 'http://localhost:3000/sso';
       console.log('[AUTH MIDDLEWARE] Validating SSO session with:', `${ssoUrl}/api/validate-session`);
@@ -100,7 +101,7 @@ export async function verifyAuth(request: NextRequest): Promise<NextResponse | n
       const validationResponse = await fetch(`${ssoUrl}/api/validate-session`, {
         method: 'GET',
         headers: {
-          'Cookie': `session_token=${sessionToken}`,
+          'Authorization': `Bearer ${session.accessToken}`,
         },
         // Don't follow redirects
         redirect: 'manual',
